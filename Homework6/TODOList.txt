@@ -1,9 +1,10 @@
 Problem 1
-- Write code for graphs for problem 
-- Write code for the trend line in the form of CN^-s
+- Finish WriteUp for this problem
 
+Problem 2
+- Finish Writeup for this problem
 Problem 3
-- Solve problem using the explicit order method
+- Finish writeup for this problem
 
 Problem 4
 - solve problem using the explicit order method
