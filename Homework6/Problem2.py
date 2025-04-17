@@ -22,14 +22,16 @@ def explicitEuler(Δt,x0,t0):
     xs = [x0]
     ts = [t0]
     for i in range(N):
-        if i % int(.25 * N) == 0 and i != 0:
+        if i % int(.01 * N) == 0 and i != 0:
             print(f"{int(i / N * 100)} Percent Completed!")
         f_vector = f(t0,x0)
         x1 = x0 + f_vector * Δt
         x0 = x1
         t0 = t0 + Δt
-        ts.append(t0)
-        xs.append(x1)
+        if i % int(.002 * N) == 0:
+            ts.append(t0)
+            xs.append(x1)
+        
     print("Completed!")
     return xs,ts
 
@@ -65,7 +67,7 @@ def main():
 	d0 = 6371000
 	v0 = 0
 	x0 = np.array([d0,v0])
-	displayResults(.001,x0,t0=0)
+	displayResults(.0001,x0,t0=0)
 
 
     
