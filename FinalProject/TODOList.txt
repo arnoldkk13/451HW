@@ -1,0 +1,11 @@
+Write Sanity Check method
+
+Import and fix graphing methods 
+
+Run simulation and make sure that it works for verlet integration
+
+Write implicit Euler method
+
+Write embedded methods
+
+ 
