@@ -1,11 +1,11 @@
 import numpy as np
-
-# For interpreting two-line element data
-from sgp4.api import Satrec
-from sgp4.api import jday
-
-
+import time 
 import plotly.graph_objects as go
+
+# For interpreting two-line element (TLE) data
+from sgp4.api import Satrec
+from sgp4.api import jday # Is this needed?
+
 
 
 
@@ -60,7 +60,7 @@ class Satellite(CelestialBody):
     
 
 	def convertTwoLine(self):
-		if self.name.lower() == "zarya":
+		if self.name.lower() == "iss zarya":
 			self.mass = 19323 # mass in kg
 			self.radius = 12.56 # radius in kg
 
@@ -99,11 +99,15 @@ class OrbitalSimulation:
 	"""Run Simulation Function"""
 	def orbital_simulation(self):
 		# For knowing how long the simulation is taking
+		start = time.perf_counter()
 		for step in range(NUM_STEPS):
 			if step % int(.01 * NUM_STEPS) == 0:
 				print(f"{int(step / NUM_STEPS * 100)} Percent Completed!")
 			self.advanceTimestep()
 			self.sanityCheck()
+		end = time.perf_counter()
+		print("Completed!")
+		print(f"Took {end-start} seconds.")
 
 	# Kept from N-Body Simulation
 	def compute_acceleration(self, body):
@@ -119,7 +123,6 @@ class OrbitalSimulation:
 			# Gravitational acceleration formula: G * m * xj-xi / |xj-xi|^3 
 			acceleration += G * other_body.m * diff / distance_cubed  
 		return acceleration
-	
 	
 	# advances timestep for all bodies in the system
 	def advanceTimestep(self):
@@ -139,7 +142,6 @@ class OrbitalSimulation:
 	def sanityCheck(self):
 		# Write method here
 		return 
-
 
 	"""Numerical Approximation Methods"""
 
@@ -173,4 +175,75 @@ class OrbitalSimulation:
 
 	# Other approximation methods here
 
-		
+	def rkf45(self):
+		"""Butcher Tableau for rkf45"""
+		a = [[],
+          [1/4],
+          [3/32, 9/32],
+          [1932/2197, -7200/2197, 7296/2197],
+          [439/216, -8, 3680/513, -845/4104],
+          [-8/27, 2, -3544/2565, 1859/4104, -11/40]]
+
+		c = [0, 1/4, 3/8, 12/13, 1, 1/2]		
+  
+		"""4th and 5th Order Coefficients"""
+		b5 = [16/135, 0, 6656/12825, 28561/56430, -9/50, 2/55]
+		b4 = [25/216, 0, 1408/2565, 2197/4104, -1/5, 0]
+  
+  
+  
+	"""Graphing Methods"""
+
+	def graph_positions(self):
+		fig = go.Figure()
+		for idx, body in enumerate(self.bodies):
+			x_vals = [body.positionArray[t][0] for t in range(len(body.positionArray))]
+			y_vals = [body.positionArray[t][1] for t in range(len(body.positionArray))]
+			z_vals = [body.positionArray[t][2] for t in range(len(body.positionArray))]
+
+			fig.add_trace(go.Scatter3d(
+				# Add 3d line for star trajectory
+				fig.add_trace(go.Scatter3d(
+					x=x_vals,
+					y=y_vals,
+					z=z_vals,
+					mode='lines',
+					name=f'{body.name}',
+					line=dict(width=2)
+				))
+			))
+			# MAKE THIS TO SCALE WITH SATELITES AND STUFF
+			# Add dot that represents the final location of the object (To Scale)
+			fig.add_trace(go.Scatter3d(
+				x=[x_vals[-1]],
+				y=[y_vals[-1]],
+				z=[z_vals[-1]],
+				mode='markers',
+				name=f'Star {idx + 1} Current Location',
+				marker=dict(size=6, symbol='circle')
+			))
+	
+			# Set up axes and layout 
+			fig.update_layout(
+				title=f' {body.name}Satelite Trajectories for {int(SimulationYears):.0e} Years - Timestep: {int(Δtyears)} Years',
+				scene=dict(
+					xaxis_title='X',
+					yaxis_title='Y',
+					zaxis_title='Z'
+				),
+				width=800,
+				height=800,
+				showlegend=True
+			)
+		fig.show()
+
+def main():
+    earth = CelestialBody("Earth",0,0)
+    zarya = Satellite("ISS Zarya")
+    bodies = [earth, zarya]
+    system = OrbitalSimulation(bodies)
+    system.graph_positions()
+
+
+if __name__ == "__main__":
+	main()
