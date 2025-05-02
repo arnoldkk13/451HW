@@ -1,25 +1,33 @@
 import numpy as np
 import time 
+from skyfield.api import EarthSatellite, load, utc
 import plotly.graph_objects as go
+
 
 # For interpreting two-line element (TLE) data
 from sgp4.api import Satrec
 from sgp4.api import jday # Is this needed?
 
+from PIL import Image
+
 
 
 
 """Global Constants"""
-G = 6.674e-11 # Gravity Constant
+G = 6.674e-20 # Gravity Constant
 DAYS = 1
 TIME_PERIOD = DAYS * 24 * 3600 
 
-NUM_STEPS = 1e5
+NUM_STEPS = int(1e3)
 
-Δt = TIME_PERIOD / NUM_STEPS
+Δt = int(TIME_PERIOD / NUM_STEPS)
 
 # TLE of the ISS Zarya, in NEO
 # taken at 3:00PM 4/30/2025
+ZARYA_TLE = [
+	"1 25544U 98067A   25119.19035294  .00013779  00000+0  25440-3 0  9995",
+	"2 25544  51.6352 189.7367 0002491  81.0639 279.0631 15.49383308507563"
+]
 ISS_ZARYA_TLE1 = "1 25544U 98067A   25119.19035294  .00013779  00000+0  25440-3 0  9995"
 ISS_ZARYA_TLE2 = "2 25544  51.6352 189.7367 0002491  81.0639 279.0631 15.49383308507563"
 
@@ -33,20 +41,21 @@ ARKTIKA_TLE2 = "2 47719  63.1448 113.9682 7084235 268.5740  16.7891  2.00604244 
 # Defines spherical body that satelites orbit
 # In the use cases here, only will be the Earth, the Moon, and the Sun
 class CelestialBody:
-	def __init__(self,name,radius, mass, position=None,velocity=None):
+    
+	def __init__(self,name,radius, mass=None, position=None,velocity=None):
 		self.name = name
 		self.radius = radius
 		self.mass = mass
 		if position is not None:
 			self.d = np.array(position)
 		else:
-			self.d = np.array([0,0,0]) # Unless otherwise specificed, centered at origin
+			self.d = np.array([0.0,0.0,0.0]) # Unless otherwise specificed, centered at origin
 
 		if velocity is not None:
 			self.v = np.array(velocity)
 		else:
-			self.v = np.array([0,0,0]) # Unless otherwise specified, 0 velocity
-
+			self.v = np.array([0.0,0.0,0.0]) # Unless otherwise specified, 0 velocity
+		self.a = np.zeros(3)
 		self.positionArray = [self.d.copy()]
 
 
@@ -55,49 +64,53 @@ class CelestialBody:
 # Defines satelite that is orbiting the larger celestial body
 class Satellite(CelestialBody):	
 	def __init__(self, name):
-		super().__init__(self,name)
+		super().__init__(name,.005)
 		self.convertTwoLine()
     
 
 	def convertTwoLine(self):
-		if self.name.lower() == "iss zarya":
+		if self.name == "ISS Zarya":
 			self.mass = 19323 # mass in kg
-			self.radius = 12.56 # radius in kg
+			self.radius = .01256 # radius in kg
 
-			satellite = Satrec.twoline2rv(ISS_ZARYA_TLE1, ISS_ZARYA_TLE2)
-			epoch_jd = satellite.jdsatepoch  # Julian date (days)
-			epoch_fr = satellite.jdsatepochF # Fractional part of day
-			error_code, r, v = satellite.sgp4(epoch_jd, epoch_fr)
-			if error_code != 0:
-				print("Error:", error_code)
-			else:
-				self.d = r
-				self.v = v
+			satellite = EarthSatellite(ISS_ZARYA_TLE1, ISS_ZARYA_TLE2, "ISS (ZARYA)")
+			t = satellite.epoch  # Use epoch embedded in TLE
 
-		elif self.name.lower() == "arktika":
+			# Get ECI position and velocity at epoch
+			geocentric = satellite.at(t)
+			position_km = geocentric.position.km
+			velocity_kms = geocentric.velocity.km_per_s
+
+			self.d = np.array(position_km, dtype=float)
+			self.v = np.array(velocity_kms, dtype=float)
+
+		elif self.name == "Arktika":
 			self.mass = 2100 # mass in kg
-			self.radius = 5 # estiamted radius in kg
-			satellite = Satrec.twoline2rv(ARKTIKA_TLE1, ARKTIKA_TLE2)
-			epoch_jd = satellite.jdsatepoch  # Julian date (days)
-			epoch_fr = satellite.jdsatepochF # Fractional part of day
-			error_code, r, v = satellite.sgp4(epoch_jd, epoch_fr)
-			if error_code != 0:
-				print("Error:", error_code)
-			else:
-				self.d = r
-				self.v = v
+			self.radius = .005 # estiamted radius in km
+			satellite = EarthSatellite(ARKTIKA_TLE1, ARKTIKA_TLE2, "ARKTIKA-M 1")
+			t = satellite.epoch  # Use epoch embedded in TLE
 
+			# Get ECI position and velocity at epoch
+			geocentric = satellite.at(t)
+			position_km = geocentric.position.km
+			velocity_kms = geocentric.velocity.km_per_s
+
+			self.d = np.array(position_km, dtype=float)
+			self.v = np.array(velocity_kms, dtype=float)
+		self.positionArray.clear()
+		self.positionArray.append(self.d.copy())
 		# Add more or automate this process later
 		
 class OrbitalSimulation:
     # Specifying a setuptype will override all successive variables in the simulation.
-	def __init__(self,bodies):
+	def __init__(self,bodies,method):
 		self.bodies = bodies
 		self.current_time = 0
 		self.times = [self.current_time]
+		self.method = method
 
 	"""Run Simulation Function"""
-	def orbital_simulation(self):
+	def run_orbital_simulation(self):
 		# For knowing how long the simulation is taking
 		start = time.perf_counter()
 		for step in range(NUM_STEPS):
@@ -121,16 +134,16 @@ class OrbitalSimulation:
 			distance_cubed = distance_squared * distance  
 
 			# Gravitational acceleration formula: G * m * xj-xi / |xj-xi|^3 
-			acceleration += G * other_body.m * diff / distance_cubed  
+			acceleration += G * other_body.mass * diff / distance_cubed  
 		return acceleration
 	
 	# advances timestep for all bodies in the system
 	def advanceTimestep(self):
-		if self.method== 'explicit':
+		if self.method== 'Explicit':
 			self.explicit_euler()
-		elif self.method == 'implicit':
+		elif self.method == 'Implicit':
 			self.implicit_euler()
-		elif self.method == 'verlet':
+		elif self.method == 'Verlet':
 			self.verlet_integration()
 		else:
 			raise ValueError("Unsupported method")
@@ -146,16 +159,26 @@ class OrbitalSimulation:
 	"""Numerical Approximation Methods"""
 
 	def explicit_euler(self):
-
-		for body in self.bodies:
-			new_a = body.compute_acceleration(body)
-			body.v += new_a * Δt
+		new_accelerations = [self.compute_acceleration(body) for body in self.bodies]
+		for body, a_new in zip(self.bodies, new_accelerations):
 			body.d += body.v * Δt
+			body.v += a_new * Δt
+			
 			body.positionArray.append(body.d.copy())
 
-	def implicit_euler():
-		return 0
-	
+
+	# Uses the newton method for solving the implicit equation
+	def implicit_euler(self):
+		# Extrapolates arrays of all positions, velocities, and masses
+		positions = np.array([body.d for body in self.bodies])
+		velocities = np.array([body.v for body in self.bodies])
+		masses = np.array([body.mass for body in self.bodies])
+
+		r_next = positions.copy()
+
+		for iteration in range(len(self.bodies)):
+			return
+
 	def verlet_integration(self):
 		for body in self.bodies:
 			body.v += 0.5 * body.a * Δt
@@ -175,34 +198,113 @@ class OrbitalSimulation:
 
 	# Other approximation methods here
 
-	def rkf45(self):
-		"""Butcher Tableau for rkf45"""
-		a = [[],
-          [1/4],
-          [3/32, 9/32],
-          [1932/2197, -7200/2197, 7296/2197],
-          [439/216, -8, 3680/513, -845/4104],
-          [-8/27, 2, -3544/2565, 1859/4104, -11/40]]
+	def dopri45(self):
+		"""Butcher Tableau for dopri45"""
+		A = np.array([
+		[0, 0, 0, 0, 0, 0, 0],
+		[1/5, 0, 0, 0, 0, 0, 0],
+		[3/40, 9/40, 0, 0, 0, 0, 0],
+		[44/45, -56/15, 32/9, 0, 0, 0, 0],
+		[19372/6561, -25360/2187, 64448/6561, -212/729, 0, 0, 0],
+		[9017/3168, -355/33, 46732/5247, 49/176, -5103/18656, 0, 0],
+		[35/384, 0, 500/1113, 125/192, -2187/6784, 11/84, 0]
+	])
 
-		c = [0, 1/4, 3/8, 12/13, 1, 1/2]		
+		C = np.array([0, 1/5, 3/10, 4/5, 8/9, 1, 1])
   
 		"""4th and 5th Order Coefficients"""
-		b5 = [16/135, 0, 6656/12825, 28561/56430, -9/50, 2/55]
-		b4 = [25/216, 0, 1408/2565, 2197/4104, -1/5, 0]
-  
-  
-  
+		b5 = np.array([35/384, 0, 500/1113, 125/192, -2187/6784, 11/84, 0])
+		b4 = np.array([5179/57600,0,7571/16695,393/640,-92097/339200,187/2100,1/40])
+	
+		return A,b4,b5,C,7 # Number of Steps
+
+	def runge_kutta_stepper(self,method):
+		A,b4,b5,C,steps = method()
+		k = [np.zeros_like(body.v) for body in self.bodies]
+
+		k_all = np.zeros((steps, len(self.bodies), 3))
+
+		for i in range(steps):
+			new_accelerations = [self.compute_acceleration(body) for body in self.bodies]
+			for j in range(i):
+				for body, a_new in zip(self.bodies, new_accelerations):
+					body.d += body.v * Δt * A[i,j]
+					body.v += a_new * Δt
+    
+			for i, body in enumerate(self.bodies):
+				k_all[i] = new_accelerations
+
+		for i, body in enumerate(self.bodies):
+        	# Compute the 5th-order estimate (using b5)
+			v_b5 = np.sum(k_all * b5[:,None],axis=0) * Δt
+			body.v = v_b5 
+			body.d += body.v * Δt
+
+		
+
+		for i, body in enumerate(self.bodies):
+			body.d += body.v * Δt
+
+
+		return k_all
+
+
 	"""Graphing Methods"""
 
 	def graph_positions(self):
 		fig = go.Figure()
-		for idx, body in enumerate(self.bodies):
-			x_vals = [body.positionArray[t][0] for t in range(len(body.positionArray))]
-			y_vals = [body.positionArray[t][1] for t in range(len(body.positionArray))]
-			z_vals = [body.positionArray[t][2] for t in range(len(body.positionArray))]
+			
+		total_points = 1000
+		timestep_interval = NUM_STEPS // total_points
 
-			fig.add_trace(go.Scatter3d(
-				# Add 3d line for star trajectory
+
+		for idx, body in enumerate(self.bodies):
+			if body.name == "Earth":
+				num_positions = len(body.positionArray)
+				x_vals = []
+				y_vals = []
+				z_vals = []
+				for t in range(0,num_positions):
+					x_vals.append(body.positionArray[t][0])
+					y_vals.append(body.positionArray[t][1])
+					z_vals.append(body.positionArray[t][2])
+				earth_img = Image.open("FinalProject/textures/Earth.jpg")
+
+				# Resize the image if necessary, to reduce performance overhead
+				earth_img = earth_img.resize((360, 180))  # Resize based on performance needs
+
+				# Convert image to a numpy array (this will hold RGB values)
+				earth_array = np.asarray(earth_img)
+
+				# Generate spherical coordinates (longitude and latitude)
+				R = 6371  # Earth radius in km
+				lon = np.linspace(-np.pi, np.pi, earth_array.shape[1])  # Longitude range: -pi to pi
+				lat = np.linspace(-np.pi/2, np.pi/2, earth_array.shape[0])  # Latitude range: -pi/2 to pi/2
+
+				# Create meshgrid for latitude and longitude
+				lon, lat = np.meshgrid(lon, lat)
+
+				# Convert spherical coordinates to Cartesian coordinates (for 3D surface)
+				x = R * np.cos(lat) * np.cos(lon)
+				y = R * np.cos(lat) * np.sin(lon)
+				z = R * np.sin(lat)
+
+				x_shifted = x + x_vals[-1]
+				y_shifted = y + y_vals[-1]
+				z_shifted = z + z_vals[-1]
+
+				# Map the RGB texture onto the sphere
+				# We need to flatten the image and map it onto the sphere
+
+				# Normalize the image texture
+				r = earth_array[:, :, 0] / 255.0  # Red channel, normalized to [0, 1]
+				g = earth_array[:, :, 1] / 255.0  # Green channel, normalized to [0, 1]
+				b = earth_array[:, :, 2] / 255.0  # Blue channel, normalized to [0, 1]
+
+				# Stack the RGB channels for color mapping (this will be the surfacecolor)
+				rgb_texture = np.stack([r, g, b], axis=-1)
+
+				# Add 3d line for body trajectory
 				fig.add_trace(go.Scatter3d(
 					x=x_vals,
 					y=y_vals,
@@ -211,39 +313,90 @@ class OrbitalSimulation:
 					name=f'{body.name}',
 					line=dict(width=2)
 				))
-			))
-			# MAKE THIS TO SCALE WITH SATELITES AND STUFF
-			# Add dot that represents the final location of the object (To Scale)
-			fig.add_trace(go.Scatter3d(
-				x=[x_vals[-1]],
-				y=[y_vals[-1]],
-				z=[z_vals[-1]],
-				mode='markers',
-				name=f'Star {idx + 1} Current Location',
-				marker=dict(size=6, symbol='circle')
-			))
-	
-			# Set up axes and layout 
-			fig.update_layout(
-				title=f' {body.name}Satelite Trajectories for {int(SimulationYears):.0e} Years - Timestep: {int(Δtyears)} Years',
-				scene=dict(
-					xaxis_title='X',
-					yaxis_title='Y',
-					zaxis_title='Z'
-				),
-				width=800,
-				height=800,
-				showlegend=True
-			)
+
+				# Plot the Earth with the image as a mapped texture
+				fig = go.Figure(data=[
+					go.Surface(
+						x=x_shifted, y=y_shifted, z=z_shifted,
+						surfacecolor=rgb_texture,  # Use full RGB color mapping
+						showscale=False,  # Disable the color scale (it's not needed for textures)
+						lighting=dict(ambient=0.6),  # Lighting properties for better appearance
+						opacity=1  # Full opacity for the Earth surface
+					)
+				])
+				
+
+				
+			elif isinstance(body,Satellite):
+    
+				num_positions = len(body.positionArray)
+				x_vals = []
+				y_vals = []
+				z_vals = []
+				for t in range(0,num_positions):
+					x_vals.append(body.positionArray[t][0])
+					y_vals.append(body.positionArray[t][1])
+					z_vals.append(body.positionArray[t][2])
+
+				# Add 3d line for body trajectory
+				fig.add_trace(go.Scatter3d(
+					x=x_vals,
+					y=y_vals,
+					z=z_vals,
+					mode='lines',
+					name=f'{body.name}',
+					line=dict(width=2)
+				))
+			
+				# Add a grey sphere to represent the final location of the satellite
+				fig.add_trace(go.Scatter3d(
+					x=[x_vals[-1]],  # Final x position
+					y=[y_vals[-1]],  # Final y position
+					z=[z_vals[-1]],  # Final z position
+					mode='markers',
+					marker=dict(
+						size=5,  # Size of the sphere (adjust to fit your scale)
+						color='grey',  # Grey color for the sphere
+						opacity=1  # Full opacity for clear visibility
+					),
+					name=f'{body.name} (Final Location)'  # Name of the body for trace identification
+				))
+					
+				
+				# Set up axes and layout 
+				fig.update_layout(
+					title=f' {body.name}Satelite Trajectories for {int(DAYS * 24)} Hours - Timestep: Approx {Δt} Seconds',
+					scene=dict(
+						xaxis_title='X',
+						yaxis_title='Y',
+						zaxis_title='Z'
+					),
+					width=800,
+					height=800,
+					showlegend=True
+				)
 		fig.show()
 
+  
+
+
 def main():
-    earth = CelestialBody("Earth",0,0)
+    earth = CelestialBody("Earth",6371,5.972e24)
+    sun = CelestialBody("Sun", 696340,1.989e30,[150790000.0,0.0,0.0])
+    moon = CelestialBody("Moon", 1737.4,7.348e22,[0.0,384400.0,0.0])
     zarya = Satellite("ISS Zarya")
-    bodies = [earth, zarya]
-    system = OrbitalSimulation(bodies)
+    arktika = Satellite("Arktika")
+    bodies = [earth, sun, moon, zarya,arktika] # Exclude HEO for now
+    system = OrbitalSimulation(bodies,"Explicit")
+    system.run_orbital_simulation()
     system.graph_positions()
 
 
 if __name__ == "__main__":
 	main()
+
+
+
+
+
+			

@@ -1,11 +1,18 @@
-Write Sanity Check method
+Write Sanity Check method (Don't need)
 
-Import and fix graphing methods 
+Fix satelites not showing up as cones FIXED
 
-Run simulation and make sure that it works for verlet integration
+Run simulation and make sure that it works for verlet integration CHECK
 
 Write implicit Euler method
 
 Write embedded methods
+
+ 
+
+
+ NOTE: 
+
+ RUNNING EXPLICIT - TIMESTEP e2 is cool
 
  
