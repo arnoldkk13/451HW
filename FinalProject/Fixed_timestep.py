@@ -2,6 +2,8 @@ import numpy as np
 import time 
 from skyfield.api import EarthSatellite, load, utc
 import plotly.graph_objects as go
+import matplotlib.pyplot as plt
+import csv
 
 
 # For interpreting two-line element (TLE) data
@@ -18,25 +20,9 @@ G = 6.674e-20 # Gravity Constant
 DAYS = 1
 TIME_PERIOD = DAYS * 24 * 3600 
 
-NUM_STEPS = int(1e3)
+NUM_STEPS = 143
 
 Δt = int(TIME_PERIOD / NUM_STEPS)
-
-# TLE of the ISS Zarya, in NEO
-# taken at 3:00PM 4/30/2025
-ZARYA_TLE = [
-	"1 25544U 98067A   25119.19035294  .00013779  00000+0  25440-3 0  9995",
-	"2 25544  51.6352 189.7367 0002491  81.0639 279.0631 15.49383308507563"
-]
-ISS_ZARYA_TLE1 = "1 25544U 98067A   25119.19035294  .00013779  00000+0  25440-3 0  9995"
-ISS_ZARYA_TLE2 = "2 25544  51.6352 189.7367 0002491  81.0639 279.0631 15.49383308507563"
-
-# TLE of ARKTIKA-M 1, an arctic weather monitoring satellite in HEO
-# Taken at 3:05PM 4/30/2025
-ARKTIKA_TLE1 = "1 47719U 21016A   25118.78057943  .00000078  00000-0  00000-0 0  9993"
-ARKTIKA_TLE2 = "2 47719  63.1448 113.9682 7084235 268.5740  16.7891  2.00604244 30475"
-
-
 
 # Defines spherical body that satelites orbit
 # In the use cases here, only will be the Earth, the Moon, and the Sun
@@ -59,44 +45,34 @@ class CelestialBody:
 		self.positionArray = [self.d.copy()]
 
 
-		
-    
 # Defines satelite that is orbiting the larger celestial body
 class Satellite(CelestialBody):	
-	def __init__(self, name):
-		super().__init__(name,.005)
-		self.convertTwoLine()
+	def __init__(self, data):
+	
+		self.name = data[0]
+		self.radius = float(data[1])
+		mass = float(data[2])
+		name = data[0]
+		radius = float(data[1])
+		self.mass = float(data[2])
+		super().__init__(name,radius,mass)
+		TLE1 = data[3]
+		TLE2 = data[4]
+		self.convertTwoLine(TLE1, TLE2)
+		self.errors = []
     
 
-	def convertTwoLine(self):
-		if self.name == "ISS Zarya":
-			self.mass = 19323 # mass in kg
-			self.radius = .01256 # radius in kg
+	def convertTwoLine(self,TLE1,TLE2):
+		
+		satellite = EarthSatellite(TLE1, TLE2, self.name)
+		t = satellite.epoch  # Use epoch embedded in TLE
+		geocentric = satellite.at(t)
+		position_km = geocentric.position.km
+		velocity_kms = geocentric.velocity.km_per_s
 
-			satellite = EarthSatellite(ISS_ZARYA_TLE1, ISS_ZARYA_TLE2, "ISS (ZARYA)")
-			t = satellite.epoch  # Use epoch embedded in TLE
+		self.d = np.array(position_km, dtype=float)
+		self.v = np.array(velocity_kms, dtype=float)
 
-			# Get ECI position and velocity at epoch
-			geocentric = satellite.at(t)
-			position_km = geocentric.position.km
-			velocity_kms = geocentric.velocity.km_per_s
-
-			self.d = np.array(position_km, dtype=float)
-			self.v = np.array(velocity_kms, dtype=float)
-
-		elif self.name == "Arktika":
-			self.mass = 2100 # mass in kg
-			self.radius = .005 # estiamted radius in km
-			satellite = EarthSatellite(ARKTIKA_TLE1, ARKTIKA_TLE2, "ARKTIKA-M 1")
-			t = satellite.epoch  # Use epoch embedded in TLE
-
-			# Get ECI position and velocity at epoch
-			geocentric = satellite.at(t)
-			position_km = geocentric.position.km
-			velocity_kms = geocentric.velocity.km_per_s
-
-			self.d = np.array(position_km, dtype=float)
-			self.v = np.array(velocity_kms, dtype=float)
 		self.positionArray.clear()
 		self.positionArray.append(self.d.copy())
 		# Add more or automate this process later
@@ -104,10 +80,20 @@ class Satellite(CelestialBody):
 class OrbitalSimulation:
     # Specifying a setuptype will override all successive variables in the simulation.
 	def __init__(self,bodies,method):
+
 		self.bodies = bodies
+		self.import_satelite_csv() # Add the satelites to the simulation
 		self.current_time = 0
 		self.times = [self.current_time]
 		self.method = method
+
+	def import_satelite_csv(self):
+		with open('FinalProject/satelites.csv', newline='') as csvfile:
+			reader = csv.reader(csvfile)
+			for row in reader:
+				satellite = Satellite(row)
+				self.bodies.append(satellite)
+		
 
 	"""Run Simulation Function"""
 	def run_orbital_simulation(self):
@@ -117,10 +103,11 @@ class OrbitalSimulation:
 			if step % int(.01 * NUM_STEPS) == 0:
 				print(f"{int(step / NUM_STEPS * 100)} Percent Completed!")
 			self.advanceTimestep()
-			self.sanityCheck()
+			# self.sanityCheck()
 		end = time.perf_counter()
 		print("Completed!")
 		print(f"Took {end-start} seconds.")
+
 
 	# Kept from N-Body Simulation
 	def compute_acceleration(self, body):
@@ -137,19 +124,6 @@ class OrbitalSimulation:
 			acceleration += G * other_body.mass * diff / distance_cubed  
 		return acceleration
 	
-	# advances timestep for all bodies in the system
-	def advanceTimestep(self):
-		if self.method== 'Explicit':
-			self.explicit_euler()
-		elif self.method == 'Implicit':
-			self.implicit_euler()
-		elif self.method == 'Verlet':
-			self.verlet_integration()
-		else:
-			raise ValueError("Unsupported method")
-		# Advance timestep
-		self.current_time += Δt
-		self.times.append(self.current_time)
 
 	# Checks that no objects are colliding with each other, or flying off into space.
 	def sanityCheck(self):
@@ -163,7 +137,6 @@ class OrbitalSimulation:
 		for body, a_new in zip(self.bodies, new_accelerations):
 			body.d += body.v * Δt
 			body.v += a_new * Δt
-			
 			body.positionArray.append(body.d.copy())
 
 
@@ -198,6 +171,13 @@ class OrbitalSimulation:
 
 	# Other approximation methods here
 
+
+	def computePositionError(self,b5_position, b4_position,):
+		return abs(np.linalg.norm(b5_position - b4_position))
+
+	def computeVelocityError(self,b5_velocity, b4_velocity):
+		return np.linalg.norm(b5_velocity - b4_velocity)
+
 	def dopri45(self):
 		"""Butcher Tableau for dopri45"""
 		A = np.array([
@@ -218,44 +198,78 @@ class OrbitalSimulation:
 	
 		return A,b4,b5,C,7 # Number of Steps
 
-	def runge_kutta_stepper(self,method):
-		A,b4,b5,C,steps = method()
-		k = [np.zeros_like(body.v) for body in self.bodies]
-
-		k_all = np.zeros((steps, len(self.bodies), 3))
+	def runge_kutta_stepper(self, method):
+		A, b4, b5, C, steps = method()
+		initial_positions = [body.d.copy() for body in self.bodies]
+		initial_velocities = [body.v.copy() for body in self.bodies]
+		k = [[] for _ in range(steps)]
 
 		for i in range(steps):
-			new_accelerations = [self.compute_acceleration(body) for body in self.bodies]
-			for j in range(i):
-				for body, a_new in zip(self.bodies, new_accelerations):
-					body.d += body.v * Δt * A[i,j]
-					body.v += a_new * Δt
-    
-			for i, body in enumerate(self.bodies):
-				k_all[i] = new_accelerations
+			for b_idx, body in enumerate(self.bodies):
+				body.d = initial_positions[b_idx].copy()
+				body.v = initial_velocities[b_idx].copy()
+				for j in range(i):
+					body.d += Δt * A[i, j] * k[j][b_idx][1]
+					body.v += Δt * A[i, j] * k[j][b_idx][0]
 
-		for i, body in enumerate(self.bodies):
-        	# Compute the 5th-order estimate (using b5)
-			v_b5 = np.sum(k_all * b5[:,None],axis=0) * Δt
-			body.v = v_b5 
-			body.d += body.v * Δt
+			accelerations = [self.compute_acceleration(body) for body in self.bodies]
+			k[i] = [(a.copy(), body.v.copy()) for a, body in zip(accelerations, self.bodies)]
 
 		
+		for b_idx, body in enumerate(self.bodies):
+			acc_sum = sum(b5[i] * k[i][b_idx][0] for i in range(steps))
+			vel_sum = sum(b5[i] * k[i][b_idx][1] for i in range(steps))
+			b5_velocity = initial_velocities[b_idx] + Δt * acc_sum
+			body.v = b5_velocity
+			b5_position = initial_positions[b_idx] + Δt * vel_sum
+			body.d = b5_position
+			body.positionArray.append(body.d.copy())
 
-		for i, body in enumerate(self.bodies):
-			body.d += body.v * Δt
+			if isinstance(body, Satellite):
+				# For error purposes, compute b4 positions and velocities
+				acc_sum = sum(b4[i] * k[i][b_idx][0] for i in range(steps))
+				vel_sum = sum(b4[i] * k[i][b_idx][1] for i in range(steps))
+				b4_velocity = initial_velocities[b_idx] + Δt * acc_sum
+				b4_position = initial_positions[b_idx] + Δt * vel_sum
+				
 
+				body.errors.append(self.computePositionError(b5_position,b4_position))
 
-		return k_all
+	
+	
+	# advances timestep for all bodies in the system
+	def advanceTimestep(self):
+		if self.method== 'Explicit':
+			self.explicit_euler()
+		elif self.method == 'Implicit':
+			self.implicit_euler()
+		elif self.method == 'Verlet':
+			self.verlet_integration()
+		elif self.method == "Dopri":
+			self.runge_kutta_stepper(self.dopri45)
+		else:
+			raise ValueError("Unsupported method")
+		# Advance timestep
+		self.current_time += Δt
+		self.times.append(self.current_time)
 
 
 	"""Graphing Methods"""
+
+	def graph_errors(self):
+		for body in self.bodies:
+			if isinstance(body, Satellite):
+				plt.plot(self.times[1:],body.errors,label="Times Vs Errors")
+				plt.xlabel("Time (s)")
+				plt.ylabel("Error (Embedded)")
+				plt.title(f"Embedded Error vs Time for {body.name}")
+				plt.grid(True)
+				plt.show()
 
 	def graph_positions(self):
 		fig = go.Figure()
 			
 		total_points = 1000
-		timestep_interval = NUM_STEPS // total_points
 
 
 		for idx, body in enumerate(self.bodies):
@@ -365,7 +379,7 @@ class OrbitalSimulation:
 				
 				# Set up axes and layout 
 				fig.update_layout(
-					title=f' {body.name}Satelite Trajectories for {int(DAYS * 24)} Hours - Timestep: Approx {Δt} Seconds',
+					title=f'Satelite Trajectories for {int(DAYS * 24)} Hours - Timestep: Approx {Δt} Seconds',
 					scene=dict(
 						xaxis_title='X',
 						yaxis_title='Y',
@@ -377,18 +391,25 @@ class OrbitalSimulation:
 				)
 		fig.show()
 
-  
+
 
 
 def main():
+	# CHANGE METHODS HERE FOR DIFFERENT THINGS
+    method = "Dopri"
+    graphErrors = True
+
     earth = CelestialBody("Earth",6371,5.972e24)
     sun = CelestialBody("Sun", 696340,1.989e30,[150790000.0,0.0,0.0])
     moon = CelestialBody("Moon", 1737.4,7.348e22,[0.0,384400.0,0.0])
-    zarya = Satellite("ISS Zarya")
-    arktika = Satellite("Arktika")
-    bodies = [earth, sun, moon, zarya,arktika] # Exclude HEO for now
-    system = OrbitalSimulation(bodies,"Explicit")
+
+    bodies = [earth, sun, moon] 
+
+
+    system = OrbitalSimulation(bodies,method)
     system.run_orbital_simulation()
+    if method == "Dopri" and graphErrors:
+        system.graph_errors()
     system.graph_positions()
 
 
