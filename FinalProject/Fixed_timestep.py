@@ -20,9 +20,9 @@ G = 6.674e-20 # Gravity Constant
 DAYS = 1
 TIME_PERIOD = DAYS * 24 * 3600 
 
-NUM_STEPS = 143
+NUM_STEPS = int(1e4)
 
-Δt = int(TIME_PERIOD / NUM_STEPS)
+Δt = TIME_PERIOD / NUM_STEPS
 
 # Defines spherical body that satelites orbit
 # In the use cases here, only will be the Earth, the Moon, and the Sun
@@ -198,6 +198,39 @@ class OrbitalSimulation:
 	
 		return A,b4,b5,C,7 # Number of Steps
 
+	def bogacki_shampine(self):
+		"""Butcher Tableau for Bogacki–Shampine 3(2) method"""
+		A = np.array([
+			[0,    0,   0],
+			[1/2,  0,   0],
+			[0,   3/4,  0],
+			[2/9, 1/3, 4/9]
+		])
+
+		C = np.array([0, 1/2, 3/4, 1])  # Nodes (c)
+
+		"""2nd and 3rd Order Coefficients"""
+		b3 = np.array([2/9, 1/3, 4/9, 0])  # 3rd order (main solution)
+		b2 = np.array([7/24, 1/4, 1/3, 1/8])  # 2nd order (embedded)
+
+		return A, b2, b3, C, 4  # Number of stages
+
+	def heun_euler(self):
+		"""Butcher Tableau for Heun-Euler 2(1) method"""
+		A = np.array([
+			[0,   0],
+			[1,   0],
+			[1/2, 1/2]  # This row is just for Heun's final combination
+		])
+
+		C = np.array([0, 1, 1])  # Nodes (c)
+
+		"""1st and 2nd Order Coefficients"""
+		b2 = np.array([1/2, 1/2, 0])  # 2nd order (Heun)
+		b1 = np.array([1,   0,   0])  # 1st order (Euler)
+
+		return A, b1, b2, C, 3  # Number of stages
+			
 	def runge_kutta_stepper(self, method):
 		A, b4, b5, C, steps = method()
 		initial_positions = [body.d.copy() for body in self.bodies]
@@ -257,6 +290,7 @@ class OrbitalSimulation:
 	"""Graphing Methods"""
 
 	def graph_errors(self):
+		# Graph individual errors for each satellite
 		for body in self.bodies:
 			if isinstance(body, Satellite):
 				plt.plot(self.times[1:],body.errors,label="Times Vs Errors")
@@ -265,6 +299,7 @@ class OrbitalSimulation:
 				plt.title(f"Embedded Error vs Time for {body.name}")
 				plt.grid(True)
 				plt.show()
+
 
 	def graph_positions(self):
 		fig = go.Figure()
